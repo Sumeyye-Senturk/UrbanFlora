@@ -6,13 +6,14 @@ import com.sumeyye.urbanflora.domain.repository.PlantRepository
 class IdentifyPlantUseCase(
     private val plantRepository: PlantRepository
 ) {
-    suspend operator fun invoke(name: String, scientificName: String, description: String, latitude: Double, longitude: Double): Long {
+    suspend operator fun invoke(name: String, scientificName: String, latitude: Double, longitude: Double, imageUrl: String, isRare: Boolean): Long {
         val plant = Plant(
             name = name,
             scientificName = scientificName,
-            description = description,
             latitude = latitude,
-            longitude = longitude
+            longitude = longitude,
+            imageUrl = imageUrl,
+            isRare = isRare
         )
         return plantRepository.saveDiscoveredPlant(plant)
     }

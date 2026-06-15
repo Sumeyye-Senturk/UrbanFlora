@@ -2,18 +2,17 @@ package com.sumeyye.urbanflora.ui.view
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.Context
 import android.content.pm.PackageManager
-import android.location.Location
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,15 +22,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.*
-import com.sumeyye.urbanflora.ui.navigation.Screen
 import com.sumeyye.urbanflora.ui.viewmodel.MapViewModel
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -43,167 +45,146 @@ fun MapScreen(
     val context = LocalContext.current
     val discoveredPlants by viewModel.discoveredPlants.collectAsState()
 
-    // Default start position (Istanbul)
-    val defaultLocation = LatLng(41.0082, 28.9784)
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(defaultLocation, 12f)
-    }
+    Configuration.getInstance().userAgentValue = context.packageName
 
-    var locationPermissionGranted by remember { mutableStateOf(false) }
-    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
-
-    fun checkAndRequestLocation() {
-        val fineLocationPermission = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarseLocationPermission = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        locationPermissionGranted = fineLocationPermission && coarseLocationPermission
-
-        if (locationPermissionGranted) {
-            fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
-                if (location != null) {
-                    val userLatLng = LatLng(location.latitude, location.longitude)
-                    cameraPositionState.position = CameraPosition.fromLatLngZoom(userLatLng, 15f)
-                }
-            }
-        }
+    var locationPermissionGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        )
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
-        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
-        locationPermissionGranted = fineGranted && coarseGranted
-        if (locationPermissionGranted) {
-            checkAndRequestLocation()
-        }
+        locationPermissionGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
     }
 
     LaunchedEffect(Unit) {
-        permissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
+        if (!locationPermissionGranted) {
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
             )
-        )
+        }
+    }
+
+    val mapView = remember {
+        MapView(context).apply {
+            setTileSource(TileSourceFactory.MAPNIK)
+            setMultiTouchControls(true)
+            controller.setZoom(12.0)
+            controller.setCenter(GeoPoint(41.0082, 28.9784))
+        }
+    }
+
+    LaunchedEffect(discoveredPlants) {
+        mapView.overlays.filterIsInstance<Marker>().forEach { mapView.overlays.remove(it) }
+        discoveredPlants.forEach { plant ->
+            val marker = Marker(mapView)
+            marker.position = GeoPoint(plant.latitude, plant.longitude)
+            marker.title = plant.name
+            marker.subDescription = plant.scientificName
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            mapView.overlays.add(marker)
+        }
+        mapView.invalidate()
+    }
+
+    val locationOverlay = remember(locationPermissionGranted) {
+        if (locationPermissionGranted) {
+            MyLocationNewOverlay(GpsMyLocationProvider(context), mapView).apply {
+                enableMyLocation()
+            }
+        } else null
+    }
+
+    LaunchedEffect(locationOverlay) {
+        locationOverlay?.let {
+            if (!mapView.overlays.contains(it)) {
+                mapView.overlays.add(it)
+            }
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // Google Map
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            properties = MapProperties(
-                isMyLocationEnabled = locationPermissionGranted,
-                mapType = MapType.NORMAL
-            ),
-            uiSettings = MapUiSettings(
-                myLocationButtonEnabled = false,
-                zoomControlsEnabled = false
-            )
-        ) {
-            discoveredPlants.forEach { plant ->
-                val position = LatLng(plant.latitude, plant.longitude)
+        AndroidView(
+            factory = { mapView },
+            modifier = Modifier.fillMaxSize()
+        )
 
-                Circle(
-                    center = position,
-                    radius = 150.0,
-                    fillColor = if (plant.isRare) {
-                        Color(0xFFFF5252).copy(alpha = 0.35f)
-                    } else {
-                        Color(0xFF4CAF50).copy(alpha = 0.30f)
-                    },
-                    strokeColor = Color.Transparent,
-                    strokeWidth = 0f
-                )
-
-                Marker(
-                    state = rememberMarkerState(position = position),
-                    title = plant.name,
-                    snippet = "${plant.scientificName} - ${if (plant.isRare) "Nadir!" else "Yaygın"}"
-                )
-            }
-        }
-
-        // Top Header Overlay
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(16.dp)
-                .fillMaxWidth()
-        ) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
-                elevation = CardDefaults.cardElevation(4.dp),
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text(
-                            text = "UrbanFlora Harita",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "Toplam Keşif Noktası: ${discoveredPlants.size}",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(
-                        onClick = { navController.navigate(Screen.Profile.route) },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.secondaryContainer, CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = "Profile",
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
-            }
-        }
-
-        // Bottom Overlays (Scan FAB & Find Me Button)
+        // Zoom Controls with new colors
         Column(
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .align(Alignment.CenterEnd)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             SmallFloatingActionButton(
-                onClick = { checkAndRequestLocation() },
+                onClick = { mapView.controller.zoomIn() },
                 containerColor = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.primary,
                 shape = CircleShape
             ) {
-                Icon(imageVector = Icons.Default.MyLocation, contentDescription = "Konumumu Bul")
+                Icon(imageVector = Icons.Default.Add, contentDescription = "Zoom In")
             }
-
-            FloatingActionButton(
-                onClick = { navController.navigate(Screen.Camera.route) },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                shape = CircleShape,
-                modifier = Modifier.size(64.dp)
+            SmallFloatingActionButton(
+                onClick = { mapView.controller.zoomOut() },
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary,
+                shape = CircleShape
             ) {
-                Icon(
-                    imageVector = Icons.Default.CameraAlt,
-                    contentDescription = "Bitki Tara",
-                    modifier = Modifier.size(28.dp)
+                Icon(imageVector = Icons.Default.Remove, contentDescription = "Zoom Out")
+            }
+        }
+
+        // My Location Button
+        SmallFloatingActionButton(
+            onClick = {
+                locationOverlay?.let {
+                    val myLoc = it.myLocation
+                    if (myLoc != null) {
+                        mapView.controller.animateTo(myLoc)
+                    }
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+                .padding(bottom = 90.dp),
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = Color.White,
+            shape = CircleShape
+        ) {
+            Icon(imageVector = Icons.Default.MyLocation, contentDescription = "My Location")
+        }
+
+        // Stats Overlay
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(16.dp)
+                .padding(bottom = 90.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            tonalElevation = 6.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.size(10.dp).background(MaterialTheme.colorScheme.secondary, CircleShape))
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "${discoveredPlants.size} Keşif Noktası",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
         }

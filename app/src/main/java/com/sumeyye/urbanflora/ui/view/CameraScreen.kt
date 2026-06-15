@@ -1,45 +1,59 @@
 package com.sumeyye.urbanflora.ui.view
 
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.os.Build
+import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import com.sumeyye.urbanflora.ui.navigation.Screen
 import com.sumeyye.urbanflora.ui.viewmodel.PlantScanViewModel
 import com.sumeyye.urbanflora.ui.viewmodel.ScanUiState
 
-@OptIn(ExperimentalAnimationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraScreen(
     navController: NavController,
     modifier: Modifier = Modifier,
-    viewModel: PlantScanViewModel = viewModel()
+    viewModel: PlantScanViewModel = viewModel(),
 ) {
+    val context = LocalContext.current
     val scanState by viewModel.scanState.collectAsState()
     var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showBottomSheet by remember { mutableStateOf(false) }
 
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
@@ -47,6 +61,35 @@ fun CameraScreen(
         if (bitmap != null) {
             capturedBitmap = bitmap
             viewModel.analyzeImage(bitmap)
+            showBottomSheet = true
+        }
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        uri?.let {
+            try {
+                val bitmap = if (Build.VERSION.SDK_INT < 28) {
+                    MediaStore.Images.Media.getBitmap(context.contentResolver, it)
+                } else {
+                    val source = ImageDecoder.createSource(context.contentResolver, it)
+                    ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                        decoder.isMutableRequired = true
+                    }
+                }
+                capturedBitmap = bitmap
+                viewModel.analyzeImage(bitmap)
+                showBottomSheet = true
+            } catch (e: Exception) {
+                // Handle error
+            }
+        }
+    }
+
+    LaunchedEffect(scanState) {
+        if (scanState is ScanUiState.Success || scanState is ScanUiState.NoPlantFound || scanState is ScanUiState.Error) {
+            showBottomSheet = true
         }
     }
 
@@ -54,291 +97,209 @@ fun CameraScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
     ) {
+        // AI Status Text Animation
+        val infiniteTransition = rememberInfiniteTransition(label = "ai_status")
+        val alpha by infiniteTransition.animateFloat(
+            initialValue = 0.4f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "alpha"
+        )
+
+        if (capturedBitmap == null) {
+            // Camera Viewfinder Placeholder
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp)
+                    .clip(RoundedCornerShape(36.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Default.Camera,
+                        contentDescription = null,
+                        modifier = Modifier.size(56.dp),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Kamera Hazırlanıyor...",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
+            }
+        } else {
+            Image(
+                bitmap = capturedBitmap!!.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+                    .clip(RoundedCornerShape(32.dp)),
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        // Overlay Elements
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState()),
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = "Bitki Teşhisi",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-
-            // Captured Image Box
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(260.dp),
-                shape = RoundedCornerShape(20.dp),
-                elevation = CardDefaults.cardElevation(8.dp)
+            // Top Status
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier.padding(top = 16.dp),
+                shadowElevation = 6.dp
             ) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    if (capturedBitmap != null) {
-                        Image(
-                            bitmap = capturedBitmap!!.asImageBitmap(),
-                            contentDescription = "Çekilen Bitki Fotoğrafı",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Camera,
-                                contentDescription = null,
-                                modifier = Modifier.size(64.dp),
-                                color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)
-                            )
-                            Text(
-                                text = "Kamerayı açmak için aşağıdaki butona tıklayın",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
-                        }
-                    }
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Yapay Zeka Hazır",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // State Machine UI
-            AnimatedContent(
-                targetState = scanState,
-                transitionSpec = {
-                    fadeIn() togetherWith fadeOut()
-                },
-                label = "ScanStateAnimation"
-            ) { state ->
-                when (state) {
-                    is ScanUiState.Idle -> {
-                        Button(
-                            onClick = { cameraLauncher.launch(null) },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().height(56.dp)
-                        ) {
-                            Icon(imageVector = Icons.Default.Camera, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "Fotoğraf Çek ve Analiz Et", fontSize = 16.sp)
-                        }
+            // Bottom Controls
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 85.dp),
+                horizontalArrangement = Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Gallery Button
+                Surface(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clickable { 
+                            galleryLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            ) 
+                        },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shadowElevation = 4.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.PhotoLibrary,
+                            contentDescription = "Galeri",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(30.dp)
+                        )
                     }
-                    is ScanUiState.Analyzing -> {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            CircularProgressIndicator()
-                            Text(
-                                text = "Görüntü yapay zeka ile işleniyor...",
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
+                }
+
+                // Capture Button with Gradient
+                val captureBtnGradient = Brush.verticalGradient(
+                    colors = listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
+                )
+                Box(
+                    modifier = Modifier
+                        .size(90.dp)
+                        .shadow(10.dp, CircleShape)
+                        .background(captureBtnGradient, CircleShape)
+                        .padding(6.dp)
+                        .border(3.dp, Color.White.copy(alpha = 0.6f), CircleShape)
+                        .clickable { cameraLauncher.launch(null) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Camera,
+                        contentDescription = "Çek",
+                        tint = Color.White,
+                        modifier = Modifier.size(38.dp)
+                    )
+                }
+            }
+        }
+
+        // Results Bottom Sheet
+        if (showBottomSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { 
+                    showBottomSheet = false
+                    if (scanState !is ScanUiState.DiscoverySaved) {
+                        viewModel.resetState()
+                        capturedBitmap = null
+                    }
+                },
+                sheetState = sheetState,
+                dragHandle = { BottomSheetDefaults.DragHandle() },
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
+                Box(modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp).padding(bottom = 36.dp)) {
+                    when (val state = scanState) {
+                        is ScanUiState.Analyzing -> {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth().clip(CircleShape),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    "Yapay zeka analiz ediyor...",
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                        is ScanUiState.Success -> {
+                            SuccessContent(state, onSave = {
+                                viewModel.saveDiscovery(
+                                    name = state.name,
+                                    scientificName = state.scientificName,
+                                    description = state.description,
+                                    isRare = state.isRare,
+                                    latitude = 41.0082,
+                                    longitude = 28.9784
+                                )
+                            })
+                        }
+                        is ScanUiState.NoPlantFound -> {
+                            ErrorContent(
+                                title = "Maalesef!",
+                                desc = "Bu bir bitkiye benzemiyor. Lütfen tekrar dene.",
+                                icon = Icons.Default.Warning
                             )
                         }
-                    }
-                    is ScanUiState.Success -> {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                            shape = RoundedCornerShape(16.dp),
-                            elevation = CardDefaults.cardElevation(2.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = state.name,
-                                        fontSize = 20.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                    if (state.isRare) {
-                                        Badge(containerColor = MaterialTheme.colorScheme.error) {
-                                            Text(
-                                                text = "Nadir Tür (+50 Puan)",
-                                                color = MaterialTheme.colorScheme.onError,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(4.dp)
-                                            )
-                                        }
-                                    } else {
-                                        Badge(containerColor = MaterialTheme.colorScheme.secondary) {
-                                            Text(
-                                                text = "Yaygın Tür (+10 Puan)",
-                                                color = MaterialTheme.colorScheme.onSecondary,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(4.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                                Text(
-                                    text = "Botanik Adı: ${state.scientificName}",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                                )
-                                Text(
-                                    text = state.description,
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                                )
-                                Text(
-                                    text = "Yapay Zeka Doğruluk Oranı: %${"%.1f".format(state.confidence * 100)}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Light,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                                )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    OutlinedButton(
-                                        onClick = { viewModel.resetState() },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(text = "Tekrar Çek")
-                                    }
-                                    Button(
-                                        onClick = {
-                                            viewModel.saveDiscovery(
-                                                name = state.name,
-                                                scientificName = state.scientificName,
-                                                description = state.description,
-                                                isRare = state.isRare,
-                                                latitude = 41.0082,
-                                                longitude = 28.9784,
-                                                imageUrl = ""
-                                            )
-                                        },
-                                        modifier = Modifier.weight(1.5f)
-                                    ) {
-                                        Text(text = "Keşif Kitaplığına Ekle")
-                                    }
-                                }
-                            }
+                        is ScanUiState.Error -> {
+                            ErrorContent(
+                                title = "Hata",
+                                desc = state.message,
+                                icon = Icons.Default.Close
+                            )
                         }
-                    }
-                    is ScanUiState.NoPlantFound -> {
-                        ResultStateCard(
-                            title = "Bitki Bulunamadı",
-                            description = "Fotoğrafta belirgin bir bitki veya çiçek algılanamadı. Lütfen daha yakından ve net bir şekilde tekrar çekin.",
-                            icon = Icons.Default.Warning,
-                            iconColor = MaterialTheme.colorScheme.error,
-                            onRetry = { viewModel.resetState() }
-                        )
-                    }
-                    is ScanUiState.Error -> {
-                        ResultStateCard(
-                            title = "Hata Oluştu",
-                            description = state.message,
-                            icon = Icons.Default.Warning,
-                            iconColor = MaterialTheme.colorScheme.error,
-                            onRetry = { viewModel.resetState() }
-                        )
-                    }
-                    is ScanUiState.Saving -> {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            CircularProgressIndicator()
-                            Text(text = "Keşif veritabanına kaydediliyor...")
+                        is ScanUiState.DiscoverySaved -> {
+                            SavedContent(state)
                         }
-                    }
-                    is ScanUiState.DiscoverySaved -> {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(20.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(56.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                                Text(
-                                    text = "Keşif Başarıyla Kaydedildi!",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    textAlign = TextAlign.Center
-                                )
-                                Text(
-                                    text = "Tebrikler! ${state.scoreEarned} Botanik Keşif Puanı kazandınız.",
-                                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
-                                    textAlign = TextAlign.Center
-                                )
-
-                                if (state.badgeUnlocked) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Badge(
-                                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                        modifier = Modifier.padding(vertical = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = "🎉 YENİ ROZET AÇILDI!",
-                                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(6.dp),
-                                            fontSize = 13.sp
-                                        )
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            viewModel.resetState()
-                                            capturedBitmap = null
-                                        },
-                                        colors = ButtonDefaults.outlinedButtonColors(
-                                            contentColor = MaterialTheme.colorScheme.onPrimary
-                                        ),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(text = "Yeni Tarama")
-                                    }
-                                    Button(
-                                        onClick = { navController.navigate(Screen.Profile.route) },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                        ),
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(text = "Profile Git")
-                                    }
-                                }
-                            }
-                        }
+                        else -> {}
                     }
                 }
             }
@@ -347,45 +308,135 @@ fun CameraScreen(
 }
 
 @Composable
-fun ResultStateCard(
-    title: String,
-    description: String,
-    icon: ImageVector,
-    iconColor: androidx.compose.ui.graphics.Color,
-    onRetry: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+fun SuccessContent(state: ScanUiState.Success, onSave: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                color = iconColor
-            )
             Text(
-                text = title,
-                fontSize = 18.sp,
+                text = state.name,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Black,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (state.isRare) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondary,
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        "NADİR TÜR",
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+            }
+        }
+        
+        Surface(
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(
+                state.scientificName,
+                fontSize = 16.sp,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                 fontWeight = FontWeight.Bold
             )
-            Text(
-                text = description,
-                fontSize = 14.sp,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        
+        Text(
+            state.description,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 24.sp,
+            fontSize = 15.sp
+        )
+        
+        Button(
+            onClick = onSave,
+            modifier = Modifier.fillMaxWidth().height(64.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            ),
+            elevation = ButtonDefaults.buttonElevation(8.dp)
+        ) {
+            Text("Kitaplığıma Ekle", fontSize = 18.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+@Composable
+fun ErrorContent(title: String, desc: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+            tint = MaterialTheme.colorScheme.secondary
+        )
+        Text(
+            title,
+            fontWeight = FontWeight.Black,
+            fontSize = 24.sp,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            desc,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+fun SavedContent(state: ScanUiState.DiscoverySaved) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(100.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.CheckCircle,
+                contentDescription = null,
+                modifier = Modifier.size(80.dp),
+                tint = MaterialTheme.colorScheme.primary
             )
-            Button(
-                onClick = onRetry,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(text = "Tekrar Dene")
-            }
+        }
+        Text(
+            "Mükemmel Keşif!",
+            fontWeight = FontWeight.Black,
+            fontSize = 26.sp,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Surface(
+            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
+            shape = CircleShape
+        ) {
+            Text(
+                "+${state.scoreEarned} Puan Kazandın",
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                fontWeight = FontWeight.Black,
+                fontSize = 16.sp
+            )
         }
     }
 }

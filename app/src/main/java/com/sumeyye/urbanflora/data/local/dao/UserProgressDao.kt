@@ -13,8 +13,8 @@ interface UserProgressDao {
     fun getUserProgress(): Flow<UserProgressEntity?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertOrUpdate(progress: UserProgressEntity)
+    suspend fun insertOrUpdate(progress: UserProgressEntity): Long
 
     @Query("UPDATE user_progress SET totalScore = :score, discoveredCount = :count WHERE id = 1")
-    suspend fun updateScoreAndCount(score: Int, count: Int)
+    suspend fun updateScoreAndCount(score: Int, count: Int): Int
 }

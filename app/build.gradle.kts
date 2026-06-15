@@ -42,6 +42,8 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
@@ -64,6 +66,12 @@ dependencies {
 
     // ML Kit Image Labeling (on-device plant recognition)
     implementation(libs.mlkit.image.labeling)
+
+    // Coil for Image Loading
+    implementation(libs.coil.compose)
+
+    // OpenStreetMap (Free alternative to Google Maps)
+    implementation(libs.osmdroid.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

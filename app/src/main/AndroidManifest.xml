@@ -22,10 +22,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.UrbanFlora">
 
-        <!-- Google Maps API Key metadata placeholder -->
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="YOUR_MAPS_API_KEY_HERE" />
 
         <activity
             android:name=".MainActivity"
