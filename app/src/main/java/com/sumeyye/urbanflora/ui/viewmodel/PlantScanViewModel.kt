@@ -27,7 +27,7 @@ class PlantScanViewModel(application: Application) : AndroidViewModel(applicatio
     private val db = UrbanFloraDatabase.getDatabase(application)
     private val plantRepository = PlantRepositoryImpl(db.plantDao())
     private val userProgressRepository = UserProgressRepositoryImpl(db.userProgressDao())
-    private val plantAnalyzer = PlantAnalyzer()
+    private val plantAnalyzer = PlantAnalyzer(application.applicationContext)
 
     private val _scanState = MutableStateFlow<ScanUiState>(ScanUiState.Idle)
     val scanState: StateFlow<ScanUiState> = _scanState.asStateFlow()
@@ -126,6 +126,11 @@ class PlantScanViewModel(application: Application) : AndroidViewModel(applicatio
     fun resetState() {
         _scanState.value = ScanUiState.Idle
         currentBitmap = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        plantAnalyzer.close()
     }
 }
 

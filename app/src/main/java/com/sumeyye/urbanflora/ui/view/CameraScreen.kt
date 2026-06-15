@@ -8,6 +8,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -62,6 +65,24 @@ fun CameraScreen(
             capturedBitmap = bitmap
             viewModel.analyzeImage(bitmap)
             showBottomSheet = true
+        }
+    }
+
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasCameraPermission = isGranted
+        if (isGranted) {
+            cameraLauncher.launch(null)
         }
     }
 
@@ -224,7 +245,13 @@ fun CameraScreen(
                         .background(captureBtnGradient, CircleShape)
                         .padding(6.dp)
                         .border(3.dp, Color.White.copy(alpha = 0.6f), CircleShape)
-                        .clickable { cameraLauncher.launch(null) },
+                        .clickable { 
+                            if (hasCameraPermission) {
+                                cameraLauncher.launch(null)
+                            } else {
+                                permissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -315,12 +342,20 @@ fun SuccessContent(state: ScanUiState.Success, onSave: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = state.name,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Black,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Column {
+                Text(
+                    text = state.name,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Doğruluk: %${(state.confidence * 100).toInt()}",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             if (state.isRare) {
                 Surface(
                     color = MaterialTheme.colorScheme.secondary,
