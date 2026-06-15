@@ -22,9 +22,6 @@ UrbanFlora is an AI-powered mobile application designed to help users explore an
 *   **Image Loading:** [Coil](https://coil-kt.github.io/coil/)
 *   **Dependency Management:** Version Catalogs (.toml)
 
-## Screenshots 📱
-
-*(Add screenshots here after running the app)*
 
 ## Setup & Installation 🚀
 
