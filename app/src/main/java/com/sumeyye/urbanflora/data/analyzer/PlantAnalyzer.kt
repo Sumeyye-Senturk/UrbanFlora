@@ -1,104 +1,117 @@
 package com.sumeyye.urbanflora.data.analyzer
 
+import android.content.Context
 import android.graphics.Bitmap
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.label.ImageLabeling
-import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
-import kotlin.coroutines.resume
-import kotlinx.coroutines.suspendCancellableCoroutine
+import org.tensorflow.lite.DataType
+import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.support.common.FileUtil
+import org.tensorflow.lite.support.common.ops.NormalizeOp
+import org.tensorflow.lite.support.image.ImageProcessor
+import org.tensorflow.lite.support.image.TensorImage
+import org.tensorflow.lite.support.image.ops.ResizeOp
+import org.tensorflow.lite.support.label.TensorLabel
+import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
+import java.nio.MappedByteBuffer
+import java.util.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-class PlantAnalyzer {
-    private val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
+class PlantAnalyzer(context: Context) {
 
-    suspend fun analyzeImage(bitmap: Bitmap): AnalysisResult = suspendCancellableCoroutine { continuation ->
-        val image = InputImage.fromBitmap(bitmap, 0)
-        labeler.process(image)
-            .addOnSuccessListener { labels ->
-                // Check all labels for the most specific match
-                val labelStrings = labels.map { it.text.lowercase() }
+    private var interpreter: Interpreter? = null
+    private var labels: List<String>? = null
+    
+    private val modelPath = "flowers_model.tflite"
+    private val labelsPath = "labels.txt"
+    private val inputImageSize = 224 
+    
+    private val plantDescriptions = mapOf(
+        "rose" to "Aşk ve güzelliğin sembolü, hoş kokulu ve dikenli bir çiçek türü.",
+        "daisy" to "Sadeliğin simgesi, beyaz yapraklı ve sarı merkezli şifalı bitki.",
+        "dandelion" to "Sarı çiçekli, tohumları rüzgarla yayılan dayanıklı kır bitkisi.",
+        "sunflower" to "Güneşi takip eden, büyük sarı çiçekli ve çekirdek veren bitki.",
+        "tulip" to "Zarafeti temsil eden, soğanlı ve ilkbaharda açan renkli bir çiçek.",
+        "orchid" to "Nadir ve egzotik görünümlü, zarafet timsali değerli bir çiçek.",
+        "iris" to "Gökkuşağı adını taşıyan, zarif yapraklı ve renkli bir çiçek türü."
+    )
+
+    init {
+        try {
+            val tfliteModel: MappedByteBuffer = FileUtil.loadMappedFile(context, modelPath)
+            interpreter = Interpreter(tfliteModel, Interpreter.Options())
+            labels = FileUtil.loadLabels(context, labelsPath)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    suspend fun analyzeImage(bitmap: Bitmap): AnalysisResult = withContext(Dispatchers.Default) {
+        val currInterpreter = interpreter
+        val currLabels = labels
+        if (currInterpreter == null || currLabels == null) {
+            return@withContext AnalysisResult.Failure(Exception("Model yüklenemedi."))
+        }
+
+        try {
+            val imageProcessor = ImageProcessor.Builder()
+                .add(ResizeOp(inputImageSize, inputImageSize, ResizeOp.ResizeMethod.BILINEAR))
+                .add(NormalizeOp(0f, 255f)) 
+                .build()
+
+            var tensorImage = TensorImage(DataType.FLOAT32)
+            tensorImage.load(bitmap)
+            tensorImage = imageProcessor.process(tensorImage)
+
+            val probabilityBuffer = TensorBuffer.createFixedSize(
+                currInterpreter.getOutputTensor(0).shape(),
+                currInterpreter.getOutputTensor(0).dataType()
+            )
+
+            currInterpreter.run(tensorImage.buffer, probabilityBuffer.buffer)
+
+            val labelsMap = TensorLabel(currLabels, probabilityBuffer).mapWithFloatValue
+            val bestEntry = labelsMap.maxByOrNull { it.value }
+
+            if (bestEntry != null && bestEntry.value > 0.35f) { 
+                val label = bestEntry.key.lowercase(Locale.ROOT).trim()
+                val confidence = bestEntry.value
                 
-                val isPlantRelated = labelStrings.any { 
-                    it.contains("plant") || it.contains("flower") || it.contains("tree") || 
-                    it.contains("leaf") || it.contains("botany") || it.contains("vegetation")
-                }
+                val turkishName = translateToTurkish(label)
+                val description = plantDescriptions[label] ?: "Şehir ekosisteminde keşfedilen özel bir bitki türü."
+                val isRare = label in listOf("orchid", "iris")
 
-                if (isPlantRelated) {
-                    val confidence = labels.firstOrNull()?.confidence ?: 0f
-                    
-                    val result = when {
-                        labelStrings.any { it.contains("rose") } -> {
-                            Quadruple("Gül (Rosa)", "Rosa", "Aşk ve güzelliğin sembolü, hoş kokulu ve dikenli bir çiçek türü.", false)
-                        }
-                        labelStrings.any { it.contains("tulip") } -> {
-                            Quadruple("Lale (Tulipa)", "Tulipa", "Zarafeti temsil eden, soğanlı ve ilkbaharda açan renkli bir çiçek.", false)
-                        }
-                        labelStrings.any { it.contains("daisy") } -> {
-                            Quadruple("Papatya", "Matricaria chamomilla", "Sadeliğin simgesi, beyaz yapraklı ve sarı merkezli şifalı bitki.", false)
-                        }
-                        labelStrings.any { it.contains("sunflower") } -> {
-                            Quadruple("Ayçiçeği", "Helianthus annuus", "Güneşi takip eden, büyük sarı çiçekli ve çekirdek veren bitki.", false)
-                        }
-                        labelStrings.any { it.contains("orchid") } -> {
-                            Quadruple("Orkide", "Orchidaceae", "Nadir ve egzotik görünümlü, zarafet timsali değerli bir çiçek.", true)
-                        }
-                        labelStrings.any { it.contains("lavender") } -> {
-                            Quadruple("Lavanta", "Lavandula", "Rahatlatıcı kokusuyla bilinen, mor çiçekli ve aromatik bir çalı.", false)
-                        }
-                        labelStrings.any { it.contains("cactus") || it.contains("succulent") } -> {
-                            Quadruple("Kaktüs / Sukulent", "Cactaceae", "Su depolayabilen, dayanıklı ve genellikle dikenli çöl bitkisi.", false)
-                        }
-                        labelStrings.any { it.contains("lily") } -> {
-                            Quadruple("Zambak (Lily)", "Lilium", "Büyük ve gösterişli çiçekleri olan, soğanlı ve hoş kokulu bitki.", false)
-                        }
-                        labelStrings.any { it.contains("hibiscus") } -> {
-                            Quadruple("Japon Gülü (Hibiskus)", "Hibiscus rosa-sinensis", "Büyük, boru şeklinde çiçekleri olan tropikal bir çalı.", true)
-                        }
-                        labelStrings.any { it.contains("clover") } -> {
-                            Quadruple("Yonca", "Trifolium", "Genellikle üç yapraklı olan, şans getirdiğine inanılan çayır bitkisi.", false)
-                        }
-                        labelStrings.any { it.contains("pine") || it.contains("conifer") } -> {
-                            Quadruple("Çam Ağacı", "Pinus", "İğne yapraklı ve kozalaklı, her mevsim yeşil kalan anıtsal ağaç.", false)
-                        }
-                        labelStrings.any { it.contains("oak") } -> {
-                            Quadruple("Meşe Ağacı", "Quercus", "Güç ve dayanıklılığın sembolü, palamut meyvesi veren heybetli ağaç.", false)
-                        }
-                        labelStrings.any { it.contains("maple") } -> {
-                            Quadruple("Akçaağaç", "Acer", "Karakteristik yaprak şekliyle bilinen, sonbaharda renk değiştiren ağaç.", false)
-                        }
-                        labelStrings.any { it.contains("ivy") } -> {
-                            Quadruple("Sarmaşık", "Hedera helix", "Duvarlara ve ağaçlara tırmanan, her daim yeşil kalan tırmanıcı bitki.", false)
-                        }
-                        labelStrings.any { it.contains("palm") } -> {
-                            Quadruple("Palmiye", "Arecaceae", "Tropikal bölgelerin simgesi, geniş ve yelpaze benzeri yapraklı ağaç.", true)
-                        }
-                        labelStrings.any { it.contains("grass") } -> {
-                            Quadruple("Çimen / Ot", "Poaceae", "Toprağı örten, yeşil alanların temelini oluşturan ince yapraklı bitki.", false)
-                        }
-                        labelStrings.any { it.contains("fern") } -> {
-                            Quadruple("Eğrelti Otu", "Polypodiopsida", "Çiçeksiz, gölge ve nemli yerleri seven kadim bir bitki türü.", false)
-                        }
-                        labelStrings.any { it.contains("aloe") } -> {
-                            Quadruple("Aloe Vera", "Aloe barbadensis miller", "Etli yapraklarında jel barındıran, tıbbi amaçlı kullanılan sukulent.", true)
-                        }
-                        labelStrings.any { it.contains("moss") } -> {
-                            Quadruple("Yosun", "Bryophyta", "Nemli yüzeylerde halı gibi yayılan, köksüz küçük yeşil bitki.", false)
-                        }
-                        else -> {
-                            Quadruple("Yabani Bitki", "Flora silvestris", "Şehir ekosisteminde kendiliğinden yetişen, doğanın bir parçası olan bitki.", false)
-                        }
-                    }
-                    continuation.resume(AnalysisResult.Success(result.first, result.second, result.third, result.fourth, confidence))
-                } else {
-                    continuation.resume(AnalysisResult.NoPlantFound)
-                }
+                AnalysisResult.Success(
+                    name = turkishName,
+                    scientificName = label.replaceFirstChar { it.uppercase() },
+                    description = description,
+                    isRare = isRare,
+                    confidence = confidence
+                )
+            } else {
+                AnalysisResult.NoPlantFound
             }
-            .addOnFailureListener { exception ->
-                continuation.resume(AnalysisResult.Failure(exception))
-            }
+        } catch (e: Exception) {
+            AnalysisResult.Failure(e)
+        }
+    }
+
+    private fun translateToTurkish(label: String): String {
+        return when (label) {
+            "rose" -> "Gül"
+            "daisy" -> "Papatya"
+            "dandelion" -> "Karahindiba"
+            "sunflower" -> "Ayçiçeği"
+            "tulip" -> "Lale"
+            "orchid" -> "Orkide"
+            "iris" -> "İris"
+            else -> label.replaceFirstChar { it.uppercase() }
+        }
+    }
+
+    fun close() {
+        interpreter?.close()
     }
 }
-
-data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
 sealed interface AnalysisResult {
     data class Success(
